@@ -311,6 +311,7 @@ impl IPFilter {
             true => self.headers.push(x_real_ip),
             false => self.headers.retain(|header| header != x_real_ip),
         }
+        self.allow_untrusted = true;
         self
     }
 
@@ -318,6 +319,7 @@ impl IPFilter {
     /// This will use the first IP in the `X-Forwarded-For` header when present.
     pub fn use_realip_remote_addr(mut self, enabled: bool) -> Self {
         self.use_realip_remote_addr = enabled;
+        self.allow_untrusted = true;
         self
     }
 
@@ -622,9 +624,7 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_blocklist() {
-        let ip_filter = IPFilter::new()
-            .block(vec!["192.168.*.2?3"])
-            .allow_untrusted(true);
+        let ip_filter = IPFilter::new().block(vec!["192.168.*.2?3"]);
         let mut fltr = ip_filter.new_transform(test::ok_service()).await.unwrap();
 
         let req = test::TestRequest::with_uri("test")
@@ -642,10 +642,7 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_xrealip() {
-        let ip_filter = IPFilter::new()
-            .allow(vec!["192.168.*.11?"])
-            .x_real_ip(true)
-            .allow_untrusted(true);
+        let ip_filter = IPFilter::new().allow(vec!["192.168.*.11?"]).x_real_ip(true);
         let mut fltr = ip_filter.new_transform(test::ok_service()).await.unwrap();
         let req = test::TestRequest::default()
             .insert_header(("X-REAL-IP", "192.168.0.111"))
@@ -659,8 +656,7 @@ mod tests {
     async fn test_realip_remote_addr() {
         let ip_filter = IPFilter::new()
             .allow(vec!["192.168.*.11?"])
-            .use_realip_remote_addr(true)
-            .allow_untrusted(true);
+            .use_realip_remote_addr(true);
         let mut fltr = ip_filter.new_transform(test::ok_service()).await.unwrap();
         let req = test::TestRequest::default()
             .insert_header(("X-Forwarded-For", "192.168.0.111, 10.0.0.1"))
