@@ -1,9 +1,12 @@
 //! Actix Middleware for IP filter. Support glob pattern.
 //!
 //! ## Documentation
+//!
 //! * [API Documentation](https://docs.rs/actix-ip-filter/)
 //! * Cargo package: [actix-ip-filter](https://crates.io/crates/actix-ip-filter)
+//!
 //! ## Usage
+//!
 //! ```rust
 //! use actix_web::{App, HttpServer, HttpRequest, web, middleware};
 //! use actix_ip_filter::IPFilter;
@@ -53,9 +56,11 @@
 //! ```
 //!
 //! ## Limiting to certain paths
+//!
 //! You can limit the allow/block actions to a certain set of patterns representing URL paths.
 //! The following code will only allow/block to paths matching the patterns `/my/path*` and
 //! `/my/other/*.csv`.
+//!
 //! ```rust
 //! use actix_web::{App, HttpServer, HttpRequest, web, middleware};
 //! use actix_ip_filter::IPFilter;
@@ -91,14 +96,18 @@
 //!     Ok(())
 //! }
 //! ```
+//!
 //! ## Allow and block callbacks
+//!
 //! You can add an allow handler and a block handler. These handlers will be called whenever a
 //! request succeeds at passing an ip filter (allow handler) or it is blocked (block handler).
 //! This last allows you to customize the error response. The callbacks will not be called on
 //! unprotected paths.
 //!
 //! ### The allow handler.
+//!
 //! The allow handler must take three positional arguments and no return type:
+//!
 //! ```rust
 //! use actix_ip_filter::IPFilter;
 //! use actix_web::dev::ServiceRequest;
@@ -112,6 +121,7 @@
 //! the request.
 //!
 //! You can attach the handler to an `IPFilter` like this:
+//!
 //! ```rust
 //! use actix_web::{App, HttpServer, HttpRequest, web, middleware};
 //! use actix_ip_filter::IPFilter;
@@ -153,9 +163,12 @@
 //!     Ok(())
 //! }
 //! ```
+//!
 //! ### The block handler
+//!
 //! The allow handler must take three positional arguments and and optional body response as a
 //! response:
+//!
 //! ```rust
 //! use actix_ip_filter::IPFilter;
 //! use actix_web::dev::ServiceRequest;
@@ -165,11 +178,13 @@
 //!     Some(HttpResponse::UseProxy().json("{\"result\": \"error\"}"))
 //! }
 //! ```
+//!
 //! The parameters passed to the functions are borrows of the `IPFilter`, the ip of the request and
 //! the request.
 //!
 //! If the handler returns None, then the default error response is used.
 //! You can attach the handler to an `IPFilter` like this:
+//!
 //! ```rust
 //! use actix_web::{App, HttpServer, HttpRequest, web, middleware};
 //! use actix_ip_filter::IPFilter;
@@ -253,7 +268,7 @@ pub struct IPFilter {
 impl Default for IPFilter {
     fn default() -> Self {
         Self {
-            ipware: IpWare::default(),
+            ipware: IpWare::empty(),
             strict_mode: true,
             allow_untrusted: false,
             use_realip_remote_addr: false,
@@ -524,8 +539,7 @@ impl<S> IPFilterMiddleware<S> {
             }
         }
 
-        let headers: ipware::HeaderMap = req.headers().into();
-        let (ip, trusted_route) = self.ipware.get_client_ip(&headers, self.strict_mode);
+        let (ip, trusted_route) = self.ipware.get_client_ip(req.headers(), self.strict_mode);
         if let Some(ip) = ip {
             if trusted_route || self.allow_untrusted {
                 return (ip.to_string(), trusted_route);
