@@ -222,8 +222,8 @@ use actix_web::{
 };
 use futures_util::future::{ok, FutureExt as _, LocalBoxFuture, Ready};
 use glob::Pattern;
-use ipware::{HeaderName, IpWare, IpWareConfig, IpWareProxy};
-use std::{net::IpAddr, rc::Rc, str::FromStr};
+use ipware::{HeaderName, IpWare};
+use std::{rc::Rc, str::FromStr};
 
 fn wrap_pattern(list: Vec<&str>) -> Rc<Vec<Pattern>> {
     Rc::new(
@@ -239,9 +239,7 @@ type DenyHandler = fn(&IPFilter, &str, &ServiceRequest) -> Option<HttpResponse>;
 /// Middleware for filter IP of HTTP requests
 #[derive(Clone)]
 pub struct IPFilter {
-    headers: Vec<HeaderName>,
-    proxy_count: u16,
-    proxy_list: Vec<IpAddr>,
+    ipware: IpWare,
     strict_mode: bool,
     allow_untrusted: bool,
     use_realip_remote_addr: bool,
@@ -255,9 +253,7 @@ pub struct IPFilter {
 impl Default for IPFilter {
     fn default() -> Self {
         Self {
-            headers: Vec::new(),
-            proxy_count: 0,
-            proxy_list: Vec::new(),
+            ipware: IpWare::default(),
             strict_mode: true,
             allow_untrusted: false,
             use_realip_remote_addr: false,
@@ -308,9 +304,9 @@ impl IPFilter {
     pub fn x_real_ip(mut self, enabled: bool) -> Self {
         let x_real_ip = HeaderName::from_static("x-real-ip");
         match enabled {
-            true => self.headers.push(x_real_ip),
-            false => self.headers.retain(|header| header != x_real_ip),
-        }
+            true => self.ipware.trust_header(x_real_ip),
+            false => self.ipware.untrust_header(x_real_ip),
+        };
         self.allow_untrusted = true;
         self
     }
@@ -337,9 +333,11 @@ impl IPFilter {
     ///     .read_header("CF-Connecting-IP")
     ///     .read_header("X-Forwarded-For");
     /// ```
+    ///
+    /// **NOTE** headers are not trusted
     pub fn read_header(mut self, header: &str) -> Self {
         if let Ok(header) = HeaderName::from_str(header) {
-            self.headers.push(header);
+            self.ipware.trust_header(header);
         }
         self
     }
@@ -354,8 +352,8 @@ impl IPFilter {
     /// if `proxy_count = 1` then `client, proxy1`
     /// if `proxy_count = 2` then `client, proxy1, proxy2`
     /// if `proxy_count = 3` then `client, proxy1, proxy2 proxy3`
-    pub fn proxy_count(mut self, proxy_count: u16) -> Self {
-        self.proxy_count = proxy_count;
+    pub fn proxy_count(mut self, proxy_count: Option<u16>) -> Self {
+        self.ipware.proxy_count(proxy_count);
         self
     }
 
@@ -365,11 +363,14 @@ impl IPFilter {
     /// the ips associated with the requets headers or not.
     ///
     /// List of trusted proxies (pattern: `client, proxy1, ..., proxy2`)
+    ///
     /// if `proxy_list = ['10.1.1.1']` then `client, 10.1.1.1` OR `client, proxy1, 10.1.1.1`
+    ///
     /// if `proxy_list = ['10.1.1.1', '10.2.2.2']` then `client, 10.1.1.1` OR `client, proxy1, 10.2.2.2`
+    ///
     /// if `proxy_list = ['10.1.1.1', '10.2.2.2']` then `client, 10.1.1.1 10.2.2.2` OR `client, 10.1.1.1 10.2.2.2`
-    pub fn trust_proxy(mut self, proxy_ip: IpAddr) -> Self {
-        self.proxy_list.push(proxy_ip);
+    pub fn trust_proxy(mut self, proxy_ip: &str) -> Self {
+        self.ipware.trust_proxy(proxy_ip);
         self
     }
 
@@ -485,10 +486,7 @@ where
         ok(IPFilterMiddleware {
             ip_filter: self.clone(),
             service: Rc::new(service),
-            ipware: IpWare::new(
-                IpWareConfig::new(self.headers.clone(), true),
-                IpWareProxy::new(self.proxy_count, self.proxy_list.clone()),
-            ),
+            ipware: self.ipware.clone(),
             strict_mode: self.strict_mode,
             allow_untrusted: self.allow_untrusted,
             use_realip_remote_addr: self.use_realip_remote_addr,
