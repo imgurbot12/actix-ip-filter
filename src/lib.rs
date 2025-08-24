@@ -260,7 +260,8 @@ pub struct IPFilter {
     use_realip_remote_addr: bool,
     allowlist: Rc<Vec<Pattern>>,
     blocklist: Rc<Vec<Pattern>>,
-    limitlist: Rc<Vec<Pattern>>,
+    include: Rc<Vec<Pattern>>,
+    exclude: Rc<Vec<Pattern>>,
     allow_handler: Option<AllowHandler>,
     block_handler: Option<DenyHandler>,
 }
@@ -274,7 +275,8 @@ impl Default for IPFilter {
             use_realip_remote_addr: false,
             allowlist: Rc::new(vec![]),
             blocklist: Rc::new(vec![]),
-            limitlist: Rc::new(vec![]),
+            include: Rc::new(vec![]),
+            exclude: Rc::new(vec![]),
             allow_handler: None,
             block_handler: None,
         }
@@ -293,7 +295,7 @@ impl IPFilter {
             use_realip_remote_addr: false,
             allowlist: wrap_pattern(allowlist),
             blocklist: wrap_pattern(blocklist),
-            limitlist: wrap_pattern(vec![]),
+            include: wrap_pattern(vec![]),
             ..Default::default()
         }
         .x_real_ip(use_x_real_ip)
@@ -309,7 +311,7 @@ impl IPFilter {
         IPFilter {
             allowlist: wrap_pattern(allowlist),
             blocklist: wrap_pattern(blocklist),
-            limitlist: wrap_pattern(limitlist),
+            include: wrap_pattern(limitlist),
             ..Default::default()
         }
         .x_real_ip(use_x_real_ip)
@@ -427,7 +429,7 @@ impl IPFilter {
         self
     }
 
-    /// Set endpoint limit list, supporting glob pattern.
+    /// Set endpoint include list, supporting glob pattern.
     ///
     /// ## Example
     ///
@@ -437,7 +439,21 @@ impl IPFilter {
     ///     .limit_to(vec!["/path/to/protected/resource*", "/protected/file/type/*.csv"]);
     /// ```
     pub fn limit_to(mut self, limitlist: Vec<&str>) -> Self {
-        self.limitlist = wrap_pattern(limitlist);
+        self.include = wrap_pattern(limitlist);
+        self
+    }
+
+    /// Set endpoint exclude list, supporting glob pattern.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// # use actix_ip_filter::IPFilter;
+    /// let middleware = IPFilter::new()
+    ///     .exclude_from(vec!["/path/to/unprotected/resource*", "/unprotected/file/type/*.csv"]);
+    /// ```
+    pub fn exclude_from(mut self, limitlist: Vec<&str>) -> Self {
+        self.exclude = wrap_pattern(limitlist);
         self
     }
 
@@ -507,7 +523,8 @@ where
             use_realip_remote_addr: self.use_realip_remote_addr,
             allowlist: Rc::clone(&self.allowlist),
             blocklist: Rc::clone(&self.blocklist),
-            limitlist: Rc::clone(&self.limitlist),
+            include: Rc::clone(&self.include),
+            exclude: Rc::clone(&self.exclude),
             allow_handler: self.allow_handler,
             block_handler: self.block_handler,
         })
@@ -524,7 +541,8 @@ pub struct IPFilterMiddleware<S> {
     use_realip_remote_addr: bool,
     allowlist: Rc<Vec<Pattern>>,
     blocklist: Rc<Vec<Pattern>>,
-    limitlist: Rc<Vec<Pattern>>,
+    include: Rc<Vec<Pattern>>,
+    exclude: Rc<Vec<Pattern>>,
     allow_handler: Option<AllowHandler>,
     block_handler: Option<DenyHandler>,
 }
@@ -560,7 +578,10 @@ impl<S> IPFilterMiddleware<S> {
         if !trusted && !self.allow_untrusted {
             return true;
         }
-        if !self.limitlist.is_empty() && !self.limitlist.iter().any(|re| re.matches(req_path)) {
+        if !self.include.is_empty() && !self.include.iter().any(|re| re.matches(req_path)) {
+            return false;
+        }
+        if self.exclude.iter().any(|re| re.matches(req_path)) {
             return false;
         }
         if !self.allowlist.is_empty() {
@@ -601,7 +622,7 @@ where
         }
 
         if let Some(callback) = self.allow_handler {
-            if self.limitlist.is_empty() || self.limitlist.iter().any(|re| re.matches(req.path())) {
+            if self.include.is_empty() || self.include.iter().any(|re| re.matches(req.path())) {
                 callback(&self.ip_filter, &ip, &req)
             }
         }
@@ -679,7 +700,7 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_limitlist() {
+    async fn test_include() {
         let ip_filter = IPFilter::new()
             .block(vec!["192.168.*.11?"])
             .limit_to(vec!["/protected/path/*"]);
@@ -698,6 +719,28 @@ mod tests {
 
         let resp = test::call_service(&mut fltr, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[actix_rt::test]
+    async fn test_exclude() {
+        let ip_filter = IPFilter::new()
+            .block(vec!["192.168.*.11?"])
+            .exclude_from(vec!["/unprotected/path/*"]);
+        let mut fltr = ip_filter.new_transform(test::ok_service()).await.unwrap();
+
+        let req = test::TestRequest::with_uri("/unprotected/path/hello")
+            .peer_addr("192.168.0.111:8888".parse().unwrap())
+            .to_srv_request();
+
+        let resp = test::call_service(&mut fltr, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let req = test::TestRequest::with_uri("/another/path")
+            .peer_addr("192.168.0.111:8888".parse().unwrap())
+            .to_srv_request();
+
+        let resp = test::call_service(&mut fltr, req).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[actix_rt::test]
